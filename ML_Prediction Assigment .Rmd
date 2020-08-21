@@ -1,0 +1,151 @@
+---
+title: Practical Machine Learning Prediction Assignment 
+author: "Indira Pehlic"
+output:
+  html_document
+---
+## Introduction 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. The goal of this project is to predict how well a bicep curl was performed using the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. Data for this project comes from http://groupware.les.inf.puc-rio.br/har
+
+Six participants performed 10 bicep curls in five different fashions: exactly according to the correct specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+## Data Processing
+
+```{r, cache = T, echo=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+#install.packages("randomForest")
+library(randomForest)
+#install.packages("corrplot")
+library(corrplot)
+#install.packages("gbm")
+library("gbm")
+
+```
+The section below includes downloading data and creating training/testing partitions. 
+```{r, echo=TRUE}
+#Setting seed for reproducibility
+set.seed(22)
+
+#Download the data
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "training.csv")
+
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "testing.csv")
+
+#Full data for partitioning
+data <- read.csv("training.csv", stringsAsFactors=TRUE)
+
+#20 Cases for Validation
+validation <- read.csv("testing.csv", stringsAsFactors=TRUE)
+
+dim(data)
+
+```
+
+```{r, cache = T}
+#Splitting the data for test/train partitions
+set.seed(127)
+training_sample <- createDataPartition(y=data$classe, p=0.7, list=FALSE)
+training <- data[training_sample, ]
+testing <- data[-training_sample, ]
+dim(training)
+dim(testing)
+```
+Both datasets have 160 variables. The variables have quite a few of NA, that are removed. The Near Zero variance (NZV) variables and the ID variables are also removed.
+```{r, cache = T}
+#Remove variables with Nearly Zero Variance
+NZV <- nearZeroVar(training)
+training <- training[, -NZV]
+testing  <- testing[, -NZV]
+dim(training)
+dim(testing)
+```
+```{r, cache = T}
+#Remove variables that are NA
+allNA    <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, allNA==FALSE]
+testing  <- testing[, allNA==FALSE]
+dim(training)
+dim(testing)
+```
+
+```{r, cache = T}
+#Remove identification variables
+training <- training[, -(1:5)]
+testing <- testing[, -(1:5)]
+dim(training)
+dim(testing)
+```
+The corrplot graph indicates correlated variables which are shown in dark colours. 
+```{r, cache = T}
+cor_mat <- cor(training[, -54])
+corrplot(cor_mat, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+```{r, cache = T}
+#The findCorrelation function gets the highly correlated variables  
+highly_corr = findCorrelation(cor_mat, cutoff=0.75)
+names(training)[highly_corr]
+```
+## Model Fitting 
+The following modeling methods will be applied to predict the outcome: 
+1. Decision Tree 
+2. Random Forests
+3. Generalized Boosted Model
+
+### Decesion Tree Modelling 
+
+```{r, cache = T}
+set.seed(12345)
+model_dt <- rpart(classe ~ ., data=training, method="class")
+
+#Predicting on test dataset
+predict_dt <- predict(model_dt, testing, type = "class")
+cmDT <- confusionMatrix(predict_dt, testing$classe)
+cmDT
+```
+
+### Random Forest Modelling 
+```{r, cache = T}
+control_rf <- trainControl(method="cv", number=3, verboseIter=TRUE)
+model_rf <- train(classe ~ ., data=training, method="rf", trControl=control_rf, importance = TRUE)
+model_rf$finalModel
+```
+
+```{r, cache = T}
+#Predicting on test dataset
+predict_rf <- predict(model_rf, newdata=testing)
+cmRF <- confusionMatrix(predict_rf, testing$classe)
+cmRF
+```
+
+### Generalized Boosted Modelling 
+```{r, cache = T}
+set.seed(12345)
+control_gbm<- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+model_gbm  <- train(classe ~ ., data=training, method = "gbm",
+                    trControl = control_gbm, verbose = FALSE)
+model_gbm$finalModel
+```
+```{r, cache = T}
+#Predicting on test dataset
+predict_gbm <- predict(model_gbm, newdata=testing)
+cmGBM <- confusionMatrix(predict_gbm, testing$classe)
+cmGBM
+```
+By comparing the accuracy rate values of the three models, the random forest model performed the best overall, and will be used to predict the validation set.
+```{r, cache = T}
+AccuracyResults <- data.frame(
+  Model = c('RF', 'GBM', 'DT'),
+  Accuracy = rbind(cmRF$overall[1], cmGBM$overall[1], cmDT$overall[1])
+)
+print(AccuracyResults)
+```
+## Prediction 
+The random forest model is used to predict classe variable for each of the 20 observations in the validation data sample (‘pml-testing.csv’). 
+```{r, cache = T}
+pred_Val <- predict(model_rf, newdata=validation)
+print(pred_Val)
+```
